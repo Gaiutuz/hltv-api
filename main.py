@@ -6,6 +6,11 @@ from python_utils import converters
 import time
 import zoneinfo
 import tzlocal
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 HLTV_COOKIE_TIMEZONE = "Europe/Copenhagen"
 HLTV_ZONEINFO=zoneinfo.ZoneInfo(HLTV_COOKIE_TIMEZONE)
@@ -41,20 +46,62 @@ def _monthNameToNumber(monthName: str):
         monthName = "August"
     return datetime.datetime.strptime(monthName, '%B').month
 
-def get_parsed_page(url, delay=0.5):
-    # This fixes a blocked by cloudflare error i've encountered
-    headers = {
-        "referer": "https://www.hltv.org/stats",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+def get_parsed_page(url):
+    driver = None # Inicializa driver como None
+    try:
+        # Configurações do navegador headless
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--window-size=1920,1080")
+        # User-Agent mais completo para parecer menos um bot
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.88 Safari/537.36")
 
-    cookies = {
-        "hltvTimeZone": HLTV_COOKIE_TIMEZONE
-    }
+        # Inicializa o ChromeDriver
+        driver = webdriver.Chrome(options=options)
 
-    time.sleep(delay)
+        # Acessa a URL desejada diretamente
+        driver.get(url)
 
-    return BeautifulSoup(requests.get(url, headers=headers, cookies=cookies).text, "lxml")
+        # Adiciona o cookie após a primeira visita ao domínio
+        # Isso costuma ser mais confiável
+        driver.add_cookie({
+            "name": "hltvTimeZone",
+            "value": HLTV_COOKIE_TIMEZONE, # Certifique-se que esta variável existe
+            "domain": ".hltv.org",
+            "path": "/" # Importante especificar o path
+        })
+
+        # *** Espera Explícita ***
+        # Espera até que um elemento chave na página seja carregado.
+        # Usei 'content-container' que é uma classe comum em divs de conteúdo principal na HLTV.
+        # Ajuste o seletor (By.CLASS_NAME, "content-container") se necessário para a página específica.
+        # Tempo limite de 10 segundos para a espera.
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "content-container"))
+        )
+        # Você pode adicionar outras esperas se o conteúdo específico levar mais tempo,
+        # por exemplo, espera por um elemento de placar, lista de jogadores, etc.
+        # Ex: WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.player-overview")))
+
+
+        # Captura o HTML renderizado
+        html = driver.page_source
+
+        # Cria e retorna o objeto BeautifulSoup
+        soup = BeautifulSoup(html, "lxml")
+        return soup
+
+    except Exception as e:
+        # Em caso de qualquer erro (falha na inicialização, falha na navegação, timeout da espera, etc.)
+        print(f"Erro ao obter ou analisar a página {url}: {e}")
+        return None # Retorna None em caso de erro, como no comportamento original
+
+    finally:
+        # Garante que o driver do navegador seja fechado
+        if driver:
+            driver.quit()
 
 def top5teams():
     home = get_parsed_page("https://hltv.org/")
